@@ -1,0 +1,173 @@
+import requests
+from collections import defaultdict
+
+# PUBG API Key
+API_KEY = 'YOUR_API_KEY'
+
+# Headers for the API request
+HEADERS = {
+    'Authorization': f'Bearer {API_KEY}',
+    'Accept': 'application/vnd.api+json'
+}
+
+# SUPER ranking system points configuration
+SUPER_POINTS = {
+    'placement_points': {
+        1: 10,
+        2: 6,
+        3: 5,
+        4: 4,
+        5: 3,
+        6: 2,
+        7: 1,
+        8: 1,
+    },
+    'kill_points': 1  # 1 point per kill
+}
+
+# Distance brackets for weapon effectiveness analysis
+DISTANCE_RANGES = {
+    '0-30m': (0, 30),
+    '30-50m': (30, 50),
+    '50-100m': (50, 100),
+    '100-200m': (100, 200),
+    '200+m': (200, float('inf'))
+}
+
+# Function to get player ID from player name
+def get_player_id(player_name, platform='steam'):
+    url = f'https://api.pubg.com/shards/{platform}/players?filter[playerNames]={player_name}'
+    response = requests.get(url, headers=HEADERS)
+    data = response.json()
+    player_id = data['data'][0]['id']
+    return player_id
+
+# Function to get last 6 matches for a player
+def get_last_6_matches(player_id, platform='steam'):
+    url = f'https://api.pubg.com/shards/{platform}/players/{player_id}'
+    response = requests.get(url, headers=HEADERS)
+    data = response.json()
+    matches = data['data']['relationships']['matches']['data'][:6]  # Get last 6 matches
+    match_ids = [match['id'] for match in matches]
+    return match_ids
+
+# Function to calculate points based on the SUPER ranking system
+def calculate_super_points(placement, kills):
+    placement_points = SUPER_POINTS['placement_points'].get(placement, 0)  # Get placement points or 0 if placement > 8
+    kill_points = kills * SUPER_POINTS['kill_points']
+    return placement_points, kill_points, placement_points + kill_points
+
+# Function to get weapon summary for a player in a match
+def get_weapon_summary(participants):
+    weapon_stats = defaultdict(lambda: {
+        'kills': 0,
+        'knocks': 0,
+        'stolen_kills': 0,
+        'kill_distances': [],
+        'knock_distances': []
+    })
+
+    for participant in participants:
+        for event in participant['attributes']['events']:
+            if event['type'] == 'combat' and 'weapon' in event:
+                weapon_name = event['weapon']['name']
+                if event['action'] == 'knock':
+                    weapon_stats[weapon_name]['knocks'] += 1
+                    weapon_stats[weapon_name]['knock_distances'].append(event['distance'])
+                elif event['action'] == 'kill':
+                    weapon_stats[weapon_name]['kills'] += 1
+                    weapon_stats[weapon_name]['kill_distances'].append(event['distance'])
+    
+    return weapon_stats
+
+# Function to summarize weapon effectiveness based on distance
+def analyze_weapon_effectiveness(weapon_stats):
+    effectiveness_summary = {}
+    for weapon, stats in weapon_stats.items():
+        distances = {'0-30m': 0, '30-50m': 0, '50-100m': 0, '100-200m': 0, '200+m': 0}
+
+        for distance in stats['kill_distances']:
+            for range_name, (low, high) in DISTANCE_RANGES.items():
+                if low <= distance < high:
+                    distances[range_name] += 1
+
+        effectiveness_summary[weapon] = {
+            'kills': stats['kills'],
+            'knocks': stats['knocks'],
+            'stolen_kills': stats['stolen_kills'],
+            'distances': distances
+        }
+
+    return effectiveness_summary
+
+# Function to get match summary for each of the last 6 matches
+def get_match_summary(match_id, player_id, platform='steam'):
+    url = f'https://api.pubg.com/shards/{platform}/matches/{match_id}'
+    response = requests.get(url, headers=HEADERS)
+    data = response.json()
+    
+    player_team = None
+    participants = []
+    
+    # Get team data and relevant participants
+    for roster in data['included']:
+        if roster['type'] == 'roster':
+            participant_ids = [p['id'] for p in roster['relationships']['participants']['data']]
+            if player_id in participant_ids:
+                player_team = roster
+                participants = [p for p in data['included'] if p['type'] == 'participant' and p['id'] in participant_ids]
+                break
+
+    if player_team:
+        team_placement = player_team['attributes']['stats']['rank']
+        team_kills = sum(p['attributes']['stats']['kills'] for p in participants)
+        placement_points, kill_points, total_points = calculate_super_points(team_placement, team_kills)
+        weapon_stats = get_weapon_summary(participants)
+
+        return {
+            'match_id': match_id,
+            'placement': team_placement,
+            'kills': team_kills,
+            'placement_points': placement_points,
+            'kill_points': kill_points,
+            'total_points': total_points,
+            'weapon_stats': weapon_stats
+        }
+
+# Main function to summarize the last 6 matches of a player
+def get_last_6_matches_summary(player_name, platform='steam'):
+    # Get player ID
+    player_id = get_player_id(player_name, platform)
+    
+    # Get the last 6 matches
+    match_ids = get_last_6_matches(player_id, platform)
+    
+    # Get summary for each match
+    match_summaries = [get_match_summary(match_id, player_id, platform) for match_id in match_ids]
+    
+    # Display the results
+    total_points = 0
+    print(f"Summary for player: {player_name}")
+    
+    for i, summary in enumerate(match_summaries):
+        if summary:
+            print(f"Match {i+1}:")
+            print(f"  Placement: {summary['placement']}")
+            print(f"  Kills: {summary['kills']}")
+            print(f"  Placement Points: {summary['placement_points']}")
+            print(f"  Kill Points: {summary['kill_points']}")
+            print(f"  Total Points: {summary['total_points']}")
+            total_points += summary['total_points']
+
+            # Weapon Analysis
+            weapon_effectiveness = analyze_weapon_effectiveness(summary['weapon_stats'])
+            print(f"Weapon Performance Summary:")
+            for weapon, details in weapon_effectiveness.items():
+                print(f"  Weapon: {weapon}")
+                print(f"    Total Kills: {details['kills']}, Total Knocks: {details['knocks']}, Stolen Kills: {details['stolen_kills']}")
+                print(f"    Kill Distances: {details['distances']}")
+
+    print(f"\nFinal Score for Last 6 Matches: {total_points} points")
+
+# Replace 'PLAYER_NAME' with the desired player's in-game name
+get_last_6_matches_summary('PLAYER_NAME')
