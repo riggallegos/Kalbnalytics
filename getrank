@@ -1,0 +1,66 @@
+import requests
+
+# Replace these variables with your actual values
+API_KEY = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJqdGkiOiI1ZjM2M2FiMC0yNTY5LTAxM2QtZGJhMi0yYWNhNmM1NWIyYzAiLCJpc3MiOiJnYW1lbG9ja2VyIiwiaWF0IjoxNzIxMTEwODA3LCJwdWIiOiJibHVlaG9sZSIsInRpdGxlIjoicHViZyIsImFwcCI6ImthYmxuYWxpdGljcyJ9.Tb3uc_UFVeeSYdFPmqeNlnnOuFpZ7GuGLa8XaV22iG4'
+PLATFORM = 'pc-eu'  # or 'xbox', 'psn' depending on the player
+PLAYER_NAME = 'Kalbfleisch'
+
+def get_player_id(api_key, platform, player_name):
+    url = f"https://api.pubg.com/shards/{platform}/players?filter[playerNames]={player_name}"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/vnd.api+json"
+    }
+    
+    response = requests.get(url, headers=headers)
+    
+    if response.status_code == 200:
+        player_data = response.json()
+        player_id = player_data['data'][0]['id']
+        return player_id
+    else:
+        print(f"Error fetching player ID: {response.status_code} - {response.text}")
+        return None
+
+def get_player_ranked_stats(api_key, platform, player_id):
+    # First, we need to get the current season ID
+    season_url = f"https://api.pubg.com/shards/{platform}/seasons"
+    print(season_url)
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/vnd.api+json"
+    }
+    
+    season_response = requests.get(season_url, headers=headers)
+    # print(season_response.json())
+    
+    if season_response.status_code == 200:
+        seasons = season_response.json()['data']
+        current_season_id = next((season['id'] for season in seasons if season['attributes']['isCurrentSeason']), None)
+        all_seasons = next((season for season in seasons), None)
+        if current_season_id:
+            # current_season_id='division.bro.official.pc-2018-13'
+            platform = 'steam'
+            ranked_stats_url = f"https://api.pubg.com/shards/{platform}/players/{player_id}/seasons/{current_season_id}/ranked"
+            ranked_response = requests.get(ranked_stats_url, headers=headers)
+            print(f'Ranked response status code is {ranked_response.status_code}')
+            if ranked_response.status_code == 200:
+                ranked_stats = ranked_response.json()
+                return ranked_stats
+            else:
+                print(f"Error fetching ranked stats: {ranked_response.status_code} - {ranked_response.text}")
+        else:
+            print("Current season not found.")
+    else:
+        print(f"Error fetching seasons: {season_response.status_code} - {season_response.text}")
+    
+    return None
+
+# Main logic
+if __name__ == "__main__":
+    player_id = get_player_id(API_KEY, PLATFORM, PLAYER_NAME)
+    print(player_id)
+    if player_id:
+        ranked_stats = get_player_ranked_stats(API_KEY, PLATFORM, player_id)
+        if ranked_stats:
+            print(ranked_stats)
